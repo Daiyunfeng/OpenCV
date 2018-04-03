@@ -232,7 +232,6 @@ int main(int argc, const char** argv)
 
 			cvtColor(image, hsv, COLOR_BGR2HSV);
 
-
 			if (trackObject)
 			{
 				int _vmin = vmin, _vmax = vmax;
