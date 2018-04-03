@@ -30,7 +30,8 @@ bool showHist = true;
 Rect selection;	// 标记小鼠位置
 Circle platform; // 平台的位置 大小
 Rect pool;	// 水池位置
-//水池位置转椭圆参数
+
+//水池位置转成椭圆参数
 double vAxis, hAxis;
 double centerX, centerY;
 
