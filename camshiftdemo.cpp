@@ -7,32 +7,33 @@
 #include <cmath>
 #include <ctype.h>
 #include "Vector.h"
+#include "Circle.h"
+#include "utils.h"
+#include "initiation.h"
 #define INF 0x7f7f7f7f
 using namespace cv;
 using namespace std;
-const int WIDTH = 400;
-const int HEIGTH = 400;
-const double EPS = 1e-6;
 const double ANGLE_LIMIT = 30;
-const int maxShow = 50;	//同时显示50个
 const int judgeTime = 2000;		//2000ms
-const Point2f EMPTY_POINT = Point2f(-1.0f, -1.0f);
-const Scalar platformColor = Scalar(0, 0, 255);
+const Scalar PLATFORM_COLOR = Scalar(0, 0, 255);	// 选取平台颜色
+const Scalar POOL_COLOE = Scalar(0, 0, 255);	// 选取水池颜色
+const string WHISHAW_WINDOW_NAME = "Whishaws", SPEED_WINDOW_NAME = "Speed", PLATFORM_WINDOW_NAME = "SelectPlatform", POOL_WINDOW_NAME = "SelectPool", HISTOGRAM_WINDOW = "Histogram", MAIN_WINDOW = "Histogram";
 Vector vec, mouseHead, lastLegal;
 Mat image;
 
-//椭圆参数
+bool backprojMode = false;
+bool selectObject = false;
+bool platform_confirm = false; // 是否已确认水迷宫平台的位置
+int trackObject = 0;
+bool showHist = true;
+
+Rect selection;	// 标记小鼠位置
+Circle platform; // 平台的位置 大小
+Rect pool;	// 水池位置
+//水池位置转椭圆参数
 double vAxis, hAxis;
 double centerX, centerY;
 
-bool backprojMode = false;
-bool selectObject = false;
-bool movePlatform = false, scalePlatform = false;
-bool platformConfirm = false, poolConfirm = false;
-int trackObject = 0;
-bool showHist = true;
-Point origin;
-Rect selection;
 int vmin = 10, vmax = 110, smin = 50;
 int tmin = 90, tmax = 200;
 vector<double> speeds;
@@ -40,56 +41,17 @@ vector<double> whishaws;
 
 //const string url = "G://视频追踪//1.mp4";
 //const string url = "G://视频追踪//1.mp4";
-const string url = "F://879404301//v1.wmv";
+const string url = "D://tencent//879404301//FileRecv//v1.wmv";
+//const string url = "F://879404301//v1.wmv";
 //const string url = "G://视频追踪//4.mpg";
 //const string url = "G://视频追踪//morris.mp4"; 
 //const string url = "C:\\Users\\Administrator\\source\\repos\\OpenCV\\x64\\Debug\\mean_shift_video.avi";
 
-double calDistance(Point2f p1, Point2f p2);
 
-struct Circle
-{
-	Point center;
-	double r;
-	Circle() {};
-	Circle(Point center, double r)
-	{
-		this->center = center;
-		this->r = r;
-	}
-	bool contains(Point pt)
-	{
-		double dis = calDistance(pt, center);
-		return dis >= r ? false : true;
-	}
-};
-Circle platform;
-
-struct relativePoint
-{
-	Point point;
-	double distance;
-	relativePoint(Point point, double distance)
-	{
-		this->point = point;
-		this->distance = distance;
-	}
-	friend bool operator<(relativePoint p1,relativePoint p2)
-	{
-		return p1.distance > p2.distance;
-	}
-};
-
-float toRad(float angle)
-{
-	return angle * CV_PI / 180.0f;
-}
-
-double calDistance(Point2f p1, Point2f p2)
-{
-	return sqrt((p1.x - p2.x)*(p1.x - p2.x) + (p1.y - p2.y)*(p1.y - p2.y));
-}
-
+Point origin;   // 鼠标上一帧位置
+/**
+ * 确认小鼠位置时鼠标事件
+ */
 static void onMouse(int event, int x, int y, int, void*)
 {
 	if (selectObject)
@@ -117,357 +79,10 @@ static void onMouse(int event, int x, int y, int, void*)
 	}
 }
 
-static void onSelectPlatform(int event, int x, int y, int, void*)
-{
-	Point now = Point(x, y);
-	if (movePlatform)
-	{
-		platform.center.x += x - origin.x;
-		platform.center.y += y - origin.y;
-		if (platform.center.x - platform.r < 0)
-		{
-			platform.center.x = platform.r;
-		}
-		if (platform.center.y - platform.r < 0)
-		{
-			platform.center.y = platform.r;
-		}
-		if (platform.center.x + platform.r >= image.cols)
-		{
-			platform.center.x = image.cols - platform.r;
-		}
-		if (platform.center.y + platform.r >= image.rows)
-		{
-			platform.center.y = image.rows - platform.r;
-		}
-		origin = now;
-	}
-	if (scalePlatform)
-	{
-		platform.r += x - origin.x;
-		if (platform.r < 10)
-		{
-			platform.r = 10;
-		}
-		if (platform.center.x - platform.r < 0)
-		{
-			platform.r = platform.center.x;
-		}
-		if (platform.center.y - platform.r < 0)
-		{
-			platform.r = platform.center.y;
-		}
-		if (platform.center.x + platform.r >= image.cols)
-		{
-			platform.r = image.cols - platform.center.x;
-		}
-		if (platform.center.y + platform.r >= image.rows)
-		{
-			platform.r = image.rows - platform.center.y;
-		}
-		origin = now;
-	}
-	switch (event)
-	{
-	case CV_EVENT_LBUTTONDOWN:
-		origin = Point(x, y);
-		if (platform.contains(origin))
-		{
-			movePlatform = true;
-		}
-		else
-		{
-			scalePlatform = true;
-		}
-		break;
-	case CV_EVENT_LBUTTONUP:
-		movePlatform = false;
-		scalePlatform = false;
-		break;
-	}
-}
-
-///找頭
-vector<relativePoint> findHeadSortPoint(Mat *image)
-{
-	vector<Point> v;
-	int rows = image->rows, cols = image->cols;
-	int count = 0, tmp;
-	double sumx = 0.0, sumy = 0.0;
-	for (int i = 0; i < rows; i++)
-	{
-		const uchar* inData = image->ptr<uchar>(i);
-		for (int j = 0; j < cols; j++)
-		{
-			tmp = (int)(*inData++);
-			if (tmp == 255)
-			{
-				sumx += i;
-				sumy += j;
-				v.push_back(Point(j, i));
-				count++;
-			}
-		}
-	}
-	sumx /= count;
-	sumy /= count;
-	vector<relativePoint> res;
-	double distance;
-	Point2f center = Point2f(sumx, sumy);
-	for (int i = 0; i < count; i++)
-	{
-		distance = calDistance(v[i], center);
-		res.push_back(relativePoint(v[i], distance));
-	}
-	sort(res.begin(), res.end());
-	return res;
-}
-
-Point findHead(Mat *image,Mat *image2 ,float x, float y)
-{
-	vector<relativePoint> res = findHeadSortPoint(image);
-	for (int i = 0; i < res.size(); ++i)
-	{
-		circle(*image2, res[i].point, 2, Scalar(0, 0, 255), -1);
-	}
-	return Point(res[0].point.x + x, res[0].point.y + y);
-}
-
-Point findHead(Mat *image, float x, float y)
-{
-	vector<relativePoint> res = findHeadSortPoint(image);
-
-	return Point(res[0].point.x + x ,res[0].point.y + y);
-}
-
-Point findHead(Mat *image)
-{
-	vector<relativePoint> res = findHeadSortPoint(image);
-
-	return res[0].point;
-}
-
-
-///選擇平台
-void selectPlatform(Mat *image)
-{
-	Mat temp = image->clone();
-	platform = Circle(Point(10, 10), 10);
-	namedWindow("selectPlatform", WINDOW_AUTOSIZE);
-	setMouseCallback("selectPlatform", onSelectPlatform, 0);
-	imshow("selectPlatform", temp);
-	int c = waitKey(30);
-	//回车
-	while (c != 13 || movePlatform || scalePlatform)
-	{
-		c = waitKey(10);
-		temp = image->clone();
-		circle(temp, platform.center, platform.r, platformColor);
-		imshow("selectPlatform", temp);
-	}
-
-	destroyWindow("selectPlatform");
-	platformConfirm = true;
-}
-
-Rect pool;
-bool poolSelect = false, poolSelected=false;
-static void onPoolMouse(int event, int x, int y, int, void*)
-{
-	if (poolSelect)
-	{
-		pool.x = MIN(x, origin.x);
-		pool.y = MIN(y, origin.y);
-		pool.width = abs(x - origin.x);
-		pool.height = abs(y - origin.y);
-
-		pool &= Rect(0, 0, image.cols, image.rows);
-	}
-
-	switch (event)
-	{
-	case CV_EVENT_LBUTTONDOWN:
-		origin = Point(x, y);
-		pool = Rect(x, y, 0, 0);
-		poolSelect = true;
-		break;
-	case CV_EVENT_LBUTTONUP:
-		poolSelect = false;
-		if (pool.width > 0 && pool.height > 0)
-			poolSelected = false;
-		poolSelected = true;
-		break;
-	}
-}
-
-///選擇水池
-void selectPool(Mat *image)
-{
-	Mat temp = image->clone();
-	namedWindow("selectPool", WINDOW_AUTOSIZE);
-	setMouseCallback("selectPool", onPoolMouse, 0);
-	imshow("selectPool", temp);
-	waitKey(30);
-	while (!poolSelected)
-	{
-		waitKey(30);
-		temp = image->clone();
-		if (pool.width > 0 && pool.height > 0)
-		{
-			ellipse(temp, RotatedRect(Point2f(pool.x + pool.width / 2, pool.y + pool.height / 2), pool.size(), 0), Scalar(0, 0, 255), 1, CV_AA);
-		}
-		imshow("selectPool", temp);
-	}
-	ellipse(temp, RotatedRect(Point2f(pool.x + pool.width / 2, pool.y + pool.height / 2), pool.size(),0), Scalar(0, 0, 255), 1, CV_AA);
-	imshow("selectPool", temp);
-	//waitKey(100000);
-	hAxis = pool.width /2.0;
-	vAxis = pool.height/2.0;
-	centerX = pool.x + pool.width / 2.0;
-	centerY = pool.y + pool.height / 2.0;
-
-	destroyWindow("selectPool");
-	poolConfirm = true;
-}
-
-static void help()
-{
-	cout << "\nThis is a demo that shows mean-shift based tracking\n"
-		"You select a color objects such as your face and it tracks it.\n"
-		"This reads from video camera (0 by default, or the camera number the user enters\n"
-		"Usage: \n"
-		"   ./camshiftdemo [camera number]\n";
-
-	cout << "\n\nHot keys: \n"
-		"\tESC - quit the program\n"
-		"\tc - stop the tracking\n"
-		"\tb - switch to/from backprojection view\n"
-		"\th - show/hide object histogram\n"
-		"\tp - pause video\n"
-		"To initialize tracking, select the object with mouse\n";
-}
-
 const char* keys =
 {
 	"{ 1 |  | 0 | camera number }"
 };
-
-
-/*
-元素==点 对应的元素
-通道 元素对应的表示方式
-elemSize() 每个元素大小，单位字节
-elemSize1() 每个通道大小，单位字节
-例8UC3
-每个通道大小为1B 8bit
-每个元素大小1B*3
-image.data[3*k,3*k+1,3*k+2]代表第k个点 对应3个通道
-uchar*
-*/
-
-// BGR2GRAY by hjc
-
-void colorReduce(const Mat& image, Mat& outImage, int div)
-{
-	int nr = image.rows;
-	int nc = image.cols;
-	outImage.create(image.size(), image.depth());
-	if (image.isContinuous() && outImage.isContinuous())
-	{
-		nr = 1;
-		nc = nc * image.rows*image.channels();
-	}
-	for (int i = 0; i < nr; i++)
-	{
-		const uchar* inData = image.ptr<uchar>(i);
-		uchar* outData = outImage.ptr<uchar>(i);
-
-		for (int j = 0; j < nc / 3; j++)
-		{
-			int tmp;
-			//tmp = ((*inData++) + (*inData++) + (*inData++)) / 3;	//Æ½¾ùÖµ·¨
-			tmp = ((*inData++) * 77 + (*inData++) * 151 + (*inData++) * 28) >> 8;
-			*outData++ = tmp;
-		}
-	}
-}
-
-//void resizeRect(Rect2f *rectRange, Mat *image)
-//{
-//	if (rectRange->x > image->cols)
-//	{
-//		rectRange->x = image->cols;
-//	}
-//	if (rectRange->y > image->rows)
-//	{
-//		rectRange->y = image->rows;
-//	}
-//	if (rectRange->x < 0)
-//	{
-//		rectRange->x = 0;
-//	}
-//	if (rectRange->y < 0)
-//	{
-//		rectRange->y = 0;
-//	}
-//	if (rectRange->x + rectRange->width > image->cols)
-//	{
-//		rectRange->width = image->cols - rectRange->x;
-//	}
-//	if (rectRange->y + rectRange->height > image->rows)
-//	{
-//		rectRange->height = image->rows - rectRange->y;
-//	}
-//}
-
-//计算2个向量cpt1 cpt2的夹角
-float getAngelOfTwoVector(Point2f &pt1, Point2f &pt2, Point2f &c)
-{
-	float theta = atan2(pt1.x - c.x, pt1.y - c.y) - atan2(pt2.x - c.x, pt2.y - c.y);
-	if (theta > CV_PI)
-		theta -= 2 * CV_PI;
-	if (theta < -CV_PI)
-		theta += 2 * CV_PI;
-
-	theta = theta * 180.0 / CV_PI;
-	return theta;
-}
-
-void paintSpeedGraph()
-{
-	Mat speedMat = Mat(WIDTH, HEIGTH, CV_8SC3,Scalar(255,255,255));
-	double dx = WIDTH;
-	dx = 1.0*dx /50;
-	int size = speeds.size();
-	if (size < 2)
-	{
-		return;
-	}
-	int index = (size - maxShow) < 0 ? 0 : (size - maxShow);
-	for (int i = index; i < size - 1; i++)
-	{
-		line(speedMat, Point2f(dx*(i + 1 - index), HEIGTH - speeds[i]), Point2f(dx*(i + 2 - index), HEIGTH - speeds[i + 1]), Scalar(0, 255, 0), 2);
-	}
-	imshow("Speed", speedMat);
-}
-
-void paintWhishawGraph()
-{
-	Mat whishawMat = Mat(WIDTH, HEIGTH, CV_8SC3, Scalar(255, 255, 255));
-	double dx = WIDTH;
-	dx = 1.0*dx / 50;
-	int size = speeds.size();
-	if (size < 2)
-	{
-		return;
-	}
-	int index = (size - maxShow) < 0 ? 0 : (size - maxShow);
-	for (int i = index; i < size - 1; i++)
-	{
-		line(whishawMat, Point2f(dx*(i + 1 - index), HEIGTH - speeds[i]/180*400), Point2f(dx*(i + 2 - index), HEIGTH - speeds[i + 1] / 180 * 400), Scalar(0, 255, 0), 2);
-	}
-	imshow("Whishaw", whishawMat);
-}
 
 void findContourImage(CvMat* srcImage, CvMemStorage **pcvMStorage, CvSeq **pcvSeq)
 {
@@ -510,10 +125,27 @@ bool judgeInEllipse(int x, int y)
 	return true;
 }
 
+/**
+ * 参数全部输入后 初始化直方图 小鼠跟踪 速度 偏差 4个窗口 并添加滑动控件
+ */
+void init()
+{
+	namedWindow(HISTOGRAM_WINDOW, 0);
+	namedWindow(MAIN_WINDOW, WINDOW_AUTOSIZE);
+	namedWindow(SPEED_WINDOW_NAME, 0);
+	namedWindow(WHISHAW_WINDOW_NAME, 0);
+	setMouseCallback(MAIN_WINDOW, onMouse, 0);
+	//createTrackbar滑动控件
+	createTrackbar("Vmin", MAIN_WINDOW, &vmin, 256, 0);
+	createTrackbar("Vmax", MAIN_WINDOW, &vmax, 256, 0);
+	createTrackbar("Smin", MAIN_WINDOW, &smin, 256, 0);
+	createTrackbar("Tmin", MAIN_WINDOW, &tmin, 256, 0);
+	createTrackbar("Tmax", MAIN_WINDOW, &tmax, 256, 0);
+}
+
 int main(int argc, const char** argv)
 {
-	help();
-
+	software_help();
 	vector<Point2f> points;
 	//CV_CAP_PROP_POS_MSEC 视频捕获时间戳
 	VideoCapture cap;
@@ -524,23 +156,16 @@ int main(int argc, const char** argv)
 	float hranges[] = { 0,180 };
 	const float* phranges = hranges;
 
-
-	//CommandLineParser parser(argc, argv, keys);
-	//int camNum = parser.get<int>("1");
-
-	//cap.open(camNum);
 	cap.open(url);
 
 	if (!cap.isOpened())
 	{
-		help();
+		software_help();
 		cout << "***Could not initialize capturing...***\n";
 		cout << "Current parameter's value: \n";
 		//parser.printErrors();
 		return -1;
 	}
-
-
 
 	Mat frame, hsv, hue, mask, hist, histimg = Mat::zeros(200, 320, CV_8UC3), backproj;
 	int lstTime = -1, nowTime = -1, inPlatform = INF;	//ms
@@ -551,7 +176,6 @@ int main(int argc, const char** argv)
 		if (!paused)
 		{
 			cap >> frame;
-			//cout <<"channels"<< frame.channels()<<endl;
 			if (frame.empty())
 			{
 				lstTime = -1;
@@ -565,57 +189,27 @@ int main(int argc, const char** argv)
 				cap.open(url);
 				cap >> frame;
 			}
-			if (!platformConfirm)
+			if (!platform_confirm)
 			{
 				frame.copyTo(image);
-				selectPlatform(&frame);
-				selectPool(&frame);
-				namedWindow("Histogram", 0);
-				namedWindow("CamShift Demo", WINDOW_AUTOSIZE);
-				namedWindow("Speed", 0);
-				namedWindow("Whishaw", 0);
-				setMouseCallback("CamShift Demo", onMouse, 0);
-				//createTrackbar滑动控件
-				createTrackbar("Vmin", "CamShift Demo", &vmin, 256, 0);
-				createTrackbar("Vmax", "CamShift Demo", &vmax, 256, 0);
-				createTrackbar("Smin", "CamShift Demo", &smin, 256, 0);
-				createTrackbar("Tmin", "CamShift Demo", &tmin, 256, 0);
-				createTrackbar("Tmax", "CamShift Demo", &tmax, 256, 0);
+				// 选择平台
+				platform = select_platform(PLATFORM_WINDOW_NAME,PLATFORM_COLOR,&frame);
+				// 选择水池
+				pool = select_pool(POOL_WINDOW_NAME,POOL_COLOE,&frame);
+				// 将结果的矩形转换成椭圆
+				hAxis = pool.width /2.0;
+				vAxis = pool.height/2.0;
+				centerX = pool.x + pool.width / 2.0;
+				centerY = pool.y + pool.height / 2.0;
+
+				init();
+				platform_confirm = true;
 			}
 		}
 		frame.copyTo(image);
 
-		/*{uchar *c = image.data;
-		for (int i = 0; i < image.cols; i++)
-		{
-			for (int j = 0; j < image.cols; j++)
-			{
-				cout << (int)*c << " ";
-				c++;
-				if (!(j % 8))
-				{
-					waitKey(100000);
-				}
-			}
-			cout << endl;
-			waitKey(100000);
-		}}*/
-
 		if (!paused)
 		{
-			//把image 从BGR转成HSV 存到hsv  抓帧出来后图片是BGR顺序储存的元素
-			//hsv 色调H 饱和度S 明度V
-			/*
-			max=max(R,G,B)；
-			min=min(R,G,B)；
-			V=max(R,G,B)；
-			S=(max-min)/max；
-			if (R = max) H = (G-B)/(max-min)* 60；
-			if (G = max) H = 120+(B-R)/(max-min)* 60；
-			if (B = max) H = 240 +(R-G)/(max-min)* 60；
-			if (H < 0) H = H+ 360；
-			*/
-
 			///删除水池外的点
 			for (int i = 0; i < image.rows; i++)
 			{
@@ -721,10 +315,11 @@ int main(int argc, const char** argv)
 
 					CvMemStorage *pcvMStorage = cvCreateMemStorage();
 					CvSeq *pcvSeq = NULL;
-					findContourImage(&(CvMat)targetImage, &pcvMStorage, &pcvSeq);
+					CvMat temp_target = targetImage;
+					findContourImage(&temp_target, &pcvMStorage, &pcvSeq);
 
 					// 画轮廓图  
-					IplImage *pOutlineImage = cvCreateImage(cvGetSize(&(CvMat)targetImage), IPL_DEPTH_8U, 3);
+					IplImage *pOutlineImage = cvCreateImage(cvGetSize(&temp_target), IPL_DEPTH_8U, 3);
 					int nLevels = 2;
 					// 填充成白色  
 					cvRectangle(pOutlineImage, cvPoint(0, 0), cvPoint(pOutlineImage->width, pOutlineImage->height), CV_RGB(255, 255, 255), CV_FILLED);
@@ -741,40 +336,14 @@ int main(int argc, const char** argv)
 						{
 							line(image, points[i], points[i + 1], Scalar(255, 255, 0));
 						}
-						double disMove = calDistance(points[size - 1], points[size - 2]);
+						double disMove = cal_distance(points[size - 1], points[size - 2]);
 						totalMove += disMove;
 
 						Mat target(mask, rectRange);
-						
-						//计算头部
-						//Point head = findHead(&target, &image,rectRange.x, rectRange.y);
-
-						//circle(image, head, 1, Scalar(0, 0, 255), -1);
-						double angle = trackBox.angle;
-						double kx, ky;
-						kx = trackBox.center.x + 1.0*trackBox.size.height / 2 * sin(angle*CV_PI / 180);
-						ky = trackBox.center.y - 1.0*trackBox.size.width / 2 * cos(angle*CV_PI / 180);
-						//double angleHead = getAngelOfTwoVector(Point2f(kx,ky), points[size - 2], points[size - 1]);
-						//Point2f head;
-						//if (abs(angleHead) > 90)
-						//{
-						//	head = Point2f(kx, ky);
-						//}
-						//else
-						//{
-						//	kx = trackBox.center.x - 1.0*trackBox.size.height / 2 * sin(angle*CV_PI / 180);
-						//	ky = trackBox.center.y + 1.0*trackBox.size.width / 2 * cos(angle*CV_PI / 180);
-						//	head = Point2f(kx, ky);
-						//}
-						//cout << "size" << trackBox.size << trackBox.angle<< endl;
-						//ellipse(image, trackBox, Scalar(0, 0, 255), 1, CV_AA);
-						//cvLine(&(CvMat)image, trackBox.center, head, CV_RGB(255, 255, 255), 2);
-						
-
 
 						Point2f longAxisDir = trackBox.center;
-						longAxisDir.x += sin(toRad(trackBox.angle)) * trackBox.size.width / 2;
-						longAxisDir.y -= cos(toRad(trackBox.angle)) * trackBox.size.height / 2;
+						longAxisDir.x += sin(to_rad(trackBox.angle)) * trackBox.size.width / 2;
+						longAxisDir.y -= cos(to_rad(trackBox.angle)) * trackBox.size.height / 2;
 						mouseHead = Vector(trackBox.center, longAxisDir);
 
 						if (vec.start.x != 0 && vec.start.y != 0)
@@ -812,14 +381,15 @@ int main(int argc, const char** argv)
 								circle(image, mouseHead.end, 2, Scalar(0, 0, 255), -1);
 							}
 						}
-						double whishaw = getAngelOfTwoVector(points[size - 1], (Point2f)platform.center, points[size - 2]);
+						Point2f center = (Point2f)platform.center;
+						double whishaw = get_angel_of_two_vector(points[size - 1], center, points[size - 2]);
 						double speed = 1000 * disMove / (nowTime - lstTime);
 						speeds.push_back(speed);
 						whishaws.push_back(whishaw);
 						//角度差
 						cout << "Current speed:" << speed << "px/s		Whishaw:" << whishaw << endl;
-						paintSpeedGraph();
-						paintWhishawGraph();
+						paint_speed_graph(SPEED_WINDOW_NAME,&speeds);
+						paint_whishaw_graph(WHISHAW_WINDOW_NAME,&whishaws);
 					}
 					if (platform.contains(points.back()))
 					{
@@ -852,9 +422,9 @@ int main(int argc, const char** argv)
 			bitwise_not(roi, roi);
 		}
 
-		circle(image, platform.center, platform.r, platformColor);
-		imshow("CamShift Demo", image);
-		imshow("Histogram", histimg);
+		circle(image, platform.center, platform.r, PLATFORM_COLOR);
+		imshow(MAIN_WINDOW, image);
+		imshow(HISTOGRAM_WINDOW, histimg);
 
 		char c = (char)waitKey(25);
 		if (c == 27) break; // Esc
@@ -870,9 +440,9 @@ int main(int argc, const char** argv)
 		case 'h':
 			showHist = !showHist;
 			if (!showHist)
-				destroyWindow("Histogram");
+				destroyWindow(HISTOGRAM_WINDOW);
 			else
-				namedWindow("Histogram", 1);
+				namedWindow(HISTOGRAM_WINDOW, 1);
 			break;
 		case 'p':
 			paused = !paused;
