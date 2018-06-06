@@ -74,3 +74,13 @@ void paint_whishaw_graph(string window_name, vector<double> *whishaws)
 	}
 	imshow(window_name, whishaw_mat);
 }
+
+bool judge_in_ellipse(Point p, Point2f center, double hAxis, double vAxis)
+{
+	double res = ((p.x - center.x)*(p.x - center.x)) / (hAxis*hAxis) + ((p.y-center.y)*(p.y-center.y)) /(vAxis*vAxis);
+	if (res > 1.0)
+	{
+		return false;
+	}
+	return true;
+}

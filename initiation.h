@@ -5,6 +5,28 @@
 #include "Circle.h"
 using namespace cv;
 
+class correction
+{
+private:
+	Mat cameraMatrix, transform;
+	Mat distCoeffs;
+	Point2f tmp1[4],tmp2[4];
+	Point2f center;
+	double r;
+	int image_row, image_col;
+	void init();
+public:
+	
+	correction()
+	{
+		init();
+	}
+
+	void init(Mat *image);
+
+	void work(Mat *image, Mat *result);
+};
+
 /**
  * 选取平台
  * @param window_name 选取窗口的窗口名

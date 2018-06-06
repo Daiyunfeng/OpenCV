@@ -53,3 +53,13 @@ void paint_speed_graph(string window_name, vector<double> *speeds);
  * @param whishaws whishaws 角度存储
  */
 void paint_whishaw_graph(string window_name, vector<double> *whishaws);
+
+/**
+ * 判断点是否在椭圆中
+ * @param p 判断点
+ * @param center 矩形中心
+ * @param hAxis 长轴
+ * @param vAxis 短轴
+ * @return true在椭圆内部包括边缘 false不在
+ */
+bool judge_in_ellipse(Point p, Point2f center, double hAxis, double vAxis);
